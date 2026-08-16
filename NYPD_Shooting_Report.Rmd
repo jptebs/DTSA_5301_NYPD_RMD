@@ -1,0 +1,299 @@
+---
+title: "NYPD Shootings Report"
+author: "J. Tebben"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: inline
+  
+---
+
+# Introduction
+
+This project presents a comprehensive analysis of shooting incident data sourced from the New York City Police Department (NYPD) and reviewed by the Office of Management and Planning. Spanning a nineteen-year period from 2006 through 2024, with the dataset last updated in February 2026, this study scrutinizes the full spectrum of shooting incidents across New York City. This analysis focuses on two primary areas of interest: seasonal trends, which examine how incident frequencies fluctuate throughout the calendar year, and longitudinal trends, which track year-over-year changes to identify broader public safety patterns over nearly decades.
+
+
+```{r setup, include=TRUE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  tidy = TRUE,
+  tidy.opts = list(width.cutoff = 60)
+)
+library(tidyverse)
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+# read in data
+
+data_url = paste0(
+  "https://data.cityofnewyork.us",
+  "/api/v3/views/833y-fsy8/export.csv?accessType=DOWNLOAD"
+  )
+
+shootings <- read_csv(data_url)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# summarize data variables
+# this is done for reference while debugging
+# will remain commented out for final submission
+
+# glimpse(shootings)
+```
+
+
+Crucially, while the majority of variables in this dataset contain missing data, chronological information remains complete across all observations. Because the incident date entries are fully populated, the structural integrity of this seasonal and annual analysis is preserved without requiring data imputation or the exclusion of incomplete records.
+
+
+```{r, message=FALSE, warning=FALSE}
+# clean data
+
+cleaned = shootings %>% 
+  mutate(
+    occur_date = mdy(OCCUR_DATE),
+    occur_month = month(occur_date),
+    
+    # Create the season column based on month numbers
+    season = case_when(
+      occur_month %in% c(12, 1, 2)  ~ "Winter",
+      occur_month %in% c(3, 4, 5)   ~ "Spring",
+      occur_month %in% c(6, 7, 8)   ~ "Summer",
+      occur_month %in% c(9, 10, 11) ~ "Fall"
+    )
+  ) %>% 
+  select(
+    occur_date, occur_month, season
+  )
+```
+
+# Part 1: Seasonal Trends
+
+For analytical simplicity, seasons are defined here using four distinct, fixed three-month intervals, with winter spanning December through February, spring encompassing March through May, and the remaining seasons following the same pattern. It is necessary to acknowledge that this month-based seasonal aggregation may introduce structural bias into the distribution. This limitation and its potential impact on the findings will be systematically addressed in a subsequent section of the analysis.
+
+
+```{r, message=FALSE, warning=FALSE}
+#create a pie chart by season
+
+# Count incidents per season
+season_counts = cleaned %>% 
+  count(season) %>%
+  mutate(
+    percent = n / sum(n),
+    label = paste0(n, "\n(", scales::percent(percent, accuracy = 0.1), ")")
+  )
+
+# Build the pie chart
+ggplot(season_counts, aes(x = "", y = n, fill = season)) +
+  geom_bar(stat = "identity", width = 1, color = "black", linewidth = 0.5) +
+  coord_polar("y", start = 0) +
+  geom_text(
+    aes(label = label), 
+    position = position_stack(vjust = 0.5), 
+    color = "white", 
+    size = 4,
+    lineheight = 0.9
+  ) +
+  theme_void() + 
+  labs(
+    title = "NYPD Shooting Incidents by Season",
+    subtitle = "Analysis of seasonal trends from 2006 to 2024",
+    fill = "Season"
+  )
+```
+
+
+The seasonal distribution displayed in the pie chart confirms that shooting incidents are most prevalent during the summer and least frequent in the winter, with spring and fall serving as intermediates between these two extremes. (Interestingly, this finding contradicts an initial hypothesis that crime rates would peak during the winter months to mirror seasonal mental health declines.) However, it is critical to acknowledge that aggregating daily occurrences into fixed three-month seasonal blocks may introduce structural bias. For instance, if a disproportionate number of 'Summer' incidents transpired during early June prior to the official solstice, or if 'Spring' incidents were heavily concentrated in early March, this rigid categorization would artificially skew the analysis away from the winter period. While seasonal groupings provide a valuable macro-level overview of the dataset, mitigating this potential bias requires a more granular evaluation conducted at the individual month level.
+
+
+```{r, message=FALSE, warning=FALSE}
+#create a bar chart by month, overlay PDF
+
+#Total shootings by month
+monthly_counts = cleaned %>%
+  group_by(occur_month) %>%
+  summarise(total_shootings = n())
+
+# Build bar chart with a density curve overlay
+ggplot(monthly_counts, aes(x = occur_month, y = total_shootings, fill = factor(occur_month))) +
+  # Draw the bars
+  geom_col(color = "black", alpha = 0.8) +
+  # Smooth trend curve tracking the bar heights
+  geom_smooth(
+    aes(x = occur_month, y = total_shootings, group = 1),
+    method = "loess", 
+    se = FALSE, 
+    color = "darkred", 
+    linewidth = 1.2
+  ) +
+  scale_x_continuous(breaks = 1:12, labels = month.abb) +
+  labs(
+    title = "NYPD Shooting Incidents by Month",
+    subtitle = "Analysis of monthly trends from 2006 to 2024",
+    x = "Month",
+    y = "Number of Shootings"
+  ) +
+  theme_light() +
+  theme(legend.position = "none")
+```
+
+
+An analysis of monthly shooting incidents further supports the same distinct seasonal pattern identified previously. Incidents spike during the summer — peaking in July — and drop significantly during the winter, reaching their lowest point in February. This trend is likely driven by increased outdoor activity and socialization during warmer weather. Higher population density in public spaces naturally creates more personal conflicts and crimes of opportunity, leading to an increase in shootings. Because the dataset contains no missing values and the event dates are completely objective, additionally, the absolute maximum and minimum months both occur within months entirely within a single traditionally defined season. These two specific findings together carry minimal risk of analysis bias. 
+
+To further reduce the potential for bias, and to ensure extreme values from a single unusual year are not skewing these cumulative results, the next section evaluates the same monthly trend on an annualized basis.
+
+
+```{r, message=FALSE, warning=FALSE}
+#Create a line graph of each year in the data set 
+#showing monthly incident counts overlaid on top of each other
+
+# Force values to be integers to prevent layout crashes experienced before debugging
+yearly_monthly_counts = cleaned %>% 
+  mutate(
+    occur_year = as.numeric(format(occur_date, "%Y")),
+    month_num  = as.numeric(occur_month)
+  ) %>% 
+  group_by(occur_year, month_num) %>% 
+  summarise(total_shootings = n(), .groups = "drop")
+
+# Build the graph
+ggplot(yearly_monthly_counts, aes(
+  x = factor(month_num), 
+  y = total_shootings, 
+  color = factor(occur_year), 
+  group = occur_year
+  )) +
+  geom_line(linewidth = 0.7, alpha = 0.7) +
+  scale_x_discrete(labels = month.abb) +
+  scale_color_discrete(direction = -1) + 
+  labs(
+    title = "Anual NYPD Shooting Incidents by Month",
+    subtitle = "Monthly comparison across two almost decades",
+    x = "Month",
+    y = "Number of Incidents",
+    color = "Year"
+  ) +
+  theme_light() +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "right",
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.spacing.y = unit(0.05, "cm"),
+    legend.key.size = unit(0.3, "cm")
+  )
+```
+
+When analyzing the data at the individual month and year level, the trends become less uniform, but they still clearly confirm our previous findings: shooting incidents in New York City remain significantly higher in the summer than in the winter. This is by far most evident in the year 2020, but even if that year is disregarded as an extreme outlier, the same trend holds true. From a practical standpoint, the NYPD can utilize this consistent seasonal insight to refine officer training and optimize deployment schedules during higher-risk months. Additionally, community organizations can leverage this information to plan targeted awareness campaigns and violence prevention efforts before the summer spike begins. 
+
+Having established these calendar-based patterns, the next section transitions to longitudinal trends to evaluate public safety shifts on a year-over-year basis.
+
+# Part 2: Longitudinal trends
+
+```{r , message=FALSE, warning=FALSE}
+#create an annotated line graph showing shooting numbers over the years
+
+# Summarise data by year safely using lubridate
+shootings_per_year <- cleaned %>% 
+  group_by(year = lubridate::year(occur_date)) %>% 
+  summarise(total_shootings = n())
+
+# Build line graph with contextual highlights
+ggplot(shootings_per_year, aes(x = year, y = total_shootings)) +
+# Highlight the drastic shift in 2020
+  annotate("rect", xmin = 2019.5, xmax = 2021.5, ymin = -Inf, ymax = Inf, 
+           fill = "gray90", alpha = 0.6) +
+   annotate("text", x = 2019.3, y = 2050, 
+           label = "2020-2021 Surge", color = "gray40", 
+           fontface = "italic", size = 3, hjust = 1) +
+# overlay underlying trend line
+  geom_smooth(
+    method = "loess", 
+    se = FALSE, 
+    color = "gray70", 
+    linetype = "dashed", 
+    linewidth = 0.8
+    ) +
+# primary data
+  geom_line(color = "steelblue", linewidth = 1.2) +
+  geom_point(color = "steelblue", size = 2.5) +
+  scale_x_continuous(breaks = 2006:2024) +
+  labs(
+    title = "Longitudinal NYPD Shooting Trends (2006 to 2024)",
+    subtitle = "Year-over-year fluctuations in total annual incidents",
+    x = "Year",
+    y = "Total Number of Shootings"
+  ) +
+  theme_light() +
+  theme(
+    panel.grid.minor = element_blank(),
+# Rotate the year text slightly so 19 years fit across the bottom cleanly
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )
+
+```
+When looking at the broader historical picture, the underlying dashed trend line on our graph highlights a steady, long-term decrease in shooting incidents from 2011 through 2019. However, this downward trajectory was interrupted by the dramatic spike in 2020 and 2021, captured by the shaded highlight banner. At first glance, this sudden surge seems to contradict our seasonal findings, where we concluded that people staying indoors during cold weather naturally reduces public conflicts. Following that exact same logic, one would expect the strict COVID-19 stay-at-home lockdowns of 2020 to cause an unprecedented drop in crime.
+
+We can, however, reconcile this anomaly without abandoning our seasonal conclusions. The shaded '2020–2021 Surge' era coincides with widespread social unrest and the Black Lives Matter protests following the controversial death of George Floyd. This period severely strained relationships and increased tensions between local communities and law enforcement, which offers a highly plausible explanation for the sudden spike in shootings. Reassuringly, the data from 2022 to 2024 shows that as those specific societal tensions began to cool, the total number of shootings resumed its steady, downward trend—vividly matching the original trajectory seen throughout the previous decade. 
+
+To better quantify this long-term direction, the next section overlays a formal linear regression model onto our historical timeline.
+
+```{r, message=FALSE, warning=FALSE}
+#plot a linear regression
+
+# Summarise data by year
+shootings_per_year <- cleaned %>% 
+  group_by(year = lubridate::year(occur_date)) %>% 
+  summarise(total_shootings = n())
+
+# perform calculations
+model <- lm(total_shootings ~ year, data = shootings_per_year)
+
+# build and plot the data with the linear regression line
+ggplot(shootings_per_year, aes(x = year, y = total_shootings)) +
+  geom_point(color = "steelblue", size = 2.5) +
+  geom_line(color = "steelblue", linewidth = 0.5, linetype = "dashed") +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred", fill = "pink", alpha = 0.2) +
+  scale_x_continuous(breaks = 2006:2024) +
+  labs(
+    title = "Linear Regression Model of NYPD Shootings",
+    subtitle = "Straight line of best fit across two decades",
+    x = "Year",
+    y = "Total Number of Shootings"
+  ) +
+  theme_light() +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )
+```
+
+Applying a linear regression model to our longitudinal data reveals an overall downward trajectory in New York City shooting incidents. However, this statistical model has clear structural limitations; for instance, it fails to capture the severe spike of 2020.
+
+Yet, evaluating the complete historical timeline alongside this regression line suggests that the frequency of shootings has returned to a decreasing rate reminiscent of the early years of this analysis. This return to the baseline implies that the city has largely stabilized following the significant disruptions of 2020 and 2021.
+
+One might hypothesize that law enforcement plays a central role in regulating these metrics, given that shootings escalated dramatically during a period of strained community relations for the NYPD. Conversely, it is equally plausible that the subsequent reduction in incidents stems from external variables, such as expanded community outreach and localized violence interruption initiatives.
+
+Drawing either conclusion definitively without supplementary empirical evidence would result in an unsupported and oversimplified interpretation of the data. Ultimately, this study demonstrates a clear downward trend in New York City shootings, isolating the visible effect rather than proving a single definitive cause.
+
+These findings highlight the critical value of continued research to identify the precise factors driving this decline. The reality likely involves a combination of elements, including optimized law enforcement practices and robust community outreach programs. Future research should systematically isolate these contributing variables to determine how such practices might be successfully replicated in other urban environments.
+
+# Conclusion
+
+Synthesizing these findings reveals a compelling dynamic between the short-term seasonal patterns and the long-term annual trends. While the annual data shows large macro-level fluctuations over the past two decades—such as steady declines followed by the sudden 2020 surge—the micro-level seasonal patterns remain remarkably stable underneath. Regardless of whether a specific year experienced a historic low or an unprecedented spike in totals, the internal calendar distribution consistently favored the summer months over the winter months year after year.
+
+This stability suggests that while major societal disruptions can shift the overall baseline volume of annual incidents, they do not easily override the predictable environmental and behavioral factors that drive seasonal spikes. Recognizing how these two timelines interact allows for a more nuanced approach to public safety. Long-term strategic planning can focus on addressing the broader annual trajectories, while immediate, tactical resource allocation can remain synchronized with the reliable and recurring shifts of the calendar year.
+
+# Appendix: System Environment and Reproducibility
+
+The detailed configuration of the R environment utilized to conduct this analysis is presented below:
+
+```{r system-environment, comment="", echo=TRUE, warning=FALSE, message=FALSE}
+# Provide the advanced, detailed system environment readout
+# This allows others to ensure they have a similar setup 
+# enhancing the reproducibility of these findings.
+
+sessioninfo::session_info()
+```
